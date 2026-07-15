@@ -25,7 +25,7 @@ public class OcrService {
     }
 
     public ReceiptResponse processReceipt(MultipartFile file) throws IOException, TesseractException {
-        if (!Files.isDirectory(Path.of(tessdataPath))) {
+        if (tessdataPath == null || tessdataPath.isBlank() || !Files.isDirectory(Path.of(tessdataPath))) {
             throw new IllegalStateException("Tesseract language data is unavailable. Configure TESSDATA_PATH.");
         }
         Tesseract tesseract = new Tesseract();

@@ -94,6 +94,19 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("message", "Signed out."));
     }
 
+    @PostMapping("/budget")
+    public ResponseEntity<?> updateBudget(@RequestBody Map<String, Double> payload, Authentication authentication) {
+        user account = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(HttpStatus.UNAUTHORIZED));
+        Double budget = payload.get("budget");
+        if (budget == null || budget <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Invalid budget amount."));
+        }
+        account.setMonthlyBudget(budget);
+        userRepository.save(account);
+        return ResponseEntity.ok(toAuthResponse(account.getEmail(), "AUTHENTICATED"));
+    }
+
     private void establishSession(Authentication authentication, HttpServletRequest request, HttpServletResponse response) {
         HttpSession existingSession = request.getSession(false);
         if (existingSession != null) {

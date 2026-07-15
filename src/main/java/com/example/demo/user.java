@@ -17,7 +17,7 @@ public class user {
     @Column(nullable = false)
     private String password;
 
-    @Column(columnDefinition = "double default 50000 not null")
+    @Column(nullable = false)
     private double monthlyBudget = 50000.0;
 
     // 🔗 Critical link: Connects this specific profile to their private history logs
