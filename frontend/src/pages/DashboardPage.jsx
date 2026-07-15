@@ -401,8 +401,6 @@ export default function DashboardPage() {
         body: JSON.stringify({ budget: baseBudget })
       })
 
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.message || 'Failed to update budget.')
 
       setUser(data)
       setSettingsSuccess('Monthly Capital Allocation updated successfully in database!')
