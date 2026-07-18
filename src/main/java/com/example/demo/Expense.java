@@ -23,6 +23,9 @@ public class Expense {
     private LocalDate date;
     private boolean isSubscription;
 
+    private String receiptSource;
+    private String receiptStatus;
+
     // 👤 Connects this single receipt line back to its unique account owner
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
@@ -41,6 +44,11 @@ public class Expense {
     public void setDate(LocalDate date) { this.date = date; }
     public boolean isIsSubscription() { return isSubscription; }
     public void setIsSubscription(boolean isSubscription) { this.isSubscription = isSubscription; }
+
+    public String getReceiptSource() { return receiptSource; }
+    public void setReceiptSource(String receiptSource) { this.receiptSource = receiptSource; }
+    public String getReceiptStatus() { return receiptStatus; }
+    public void setReceiptStatus(String receiptStatus) { this.receiptStatus = receiptStatus; }
 
     public user getUser() { return user; }
     public void setUser(user user) { this.user = user; }

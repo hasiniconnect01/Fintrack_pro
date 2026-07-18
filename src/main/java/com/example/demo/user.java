@@ -20,6 +20,11 @@ public class user {
     @Column(nullable = false)
     private double monthlyBudget = 50000.0;
 
+    private String imapHost;
+    private Integer imapPort = 993;
+    private String imapUsername;
+    private String imapPassword;
+
     // 🔗 Critical link: Connects this specific profile to their private history logs
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Expense> expenses = new ArrayList<>();
@@ -32,6 +37,16 @@ public class user {
     public void setPassword(String password) { this.password = password; }
     public double getMonthlyBudget() { return monthlyBudget; }
     public void setMonthlyBudget(double monthlyBudget) { this.monthlyBudget = monthlyBudget; }
+
+    public String getImapHost() { return imapHost; }
+    public void setImapHost(String imapHost) { this.imapHost = imapHost; }
+    public Integer getImapPort() { return imapPort; }
+    public void setImapPort(Integer imapPort) { this.imapPort = imapPort; }
+    public String getImapUsername() { return imapUsername; }
+    public void setImapUsername(String imapUsername) { this.imapUsername = imapUsername; }
+    public String getImapPassword() { return imapPassword; }
+    public void setImapPassword(String imapPassword) { this.imapPassword = imapPassword; }
+
     public List<Expense> getExpenses() { return expenses; }
     public void setExpenses(List<Expense> expenses) { this.expenses = expenses; }
 }

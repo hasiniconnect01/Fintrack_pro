@@ -39,6 +39,24 @@ export default function DashboardPage() {
   const [ocrStatusColor, setOcrStatusColor] = useState('var(--text-muted)')
   const [ocrLoading, setOcrLoading] = useState(false)
 
+  // Auto-Receipt Matching State
+  const [scannedReceipts, setScannedReceipts] = useState([])
+  const [receiptsLoading, setReceiptsLoading] = useState(false)
+  const [receiptsError, setReceiptsError] = useState('')
+  const [syncEmailConnected, setSyncEmailConnected] = useState(true)
+  const [syncGalleryConnected, setSyncGalleryConnected] = useState(true)
+  const [receiptFilter, setReceiptFilter] = useState('all') // 'all' | 'exact' | 'partial' | 'none'
+  const [manualLinkReceipt, setManualLinkReceipt] = useState(null)
+  const [receiptSuccessMsg, setReceiptSuccessMsg] = useState('')
+
+  // IMAP Configuration Inputs State
+  const [imapHost, setImapHost] = useState('')
+  const [imapPort, setImapPort] = useState('993')
+  const [imapUsername, setImapUsername] = useState('')
+  const [imapPassword, setImapPassword] = useState('')
+  const [showImapSettings, setShowImapSettings] = useState(false)
+  const [imapConfigured, setImapConfigured] = useState(false)
+
   // Dashboard Filters
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState('All')
@@ -85,6 +103,221 @@ export default function DashboardPage() {
 
   const toggleTheme = () => {
     setTheme(prev => (prev === 'light' ? 'dark' : 'light'))
+  }
+
+  const handleScanReceipts = () => {
+    if (!syncEmailConnected && !syncGalleryConnected) {
+      setReceiptsError('No sync sources are enabled. Enable email or gallery synchronization first.')
+      return
+    }
+    setReceiptsLoading(true)
+    setReceiptsError('')
+    setScannedReceipts([])
+
+    setTimeout(async () => {
+      try {
+        const response = await fetch('/api/receipt-matching/scanned-receipts')
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.message || 'Failed to retrieve scanned receipts.')
+
+        let receipts = data.receipts || []
+        setImapConfigured(data.imapConfigured)
+        if (data.imapConfigured) {
+          setImapUsername(data.imapUsername || '')
+          setImapHost(data.imapHost || '')
+        }
+
+        // Filter based on active sync selections
+        const filteredData = receipts.filter(item => {
+          if (item.source === 'EMAIL' && !syncEmailConnected) return false
+          if (item.source === 'GALLERY' && !syncGalleryConnected) return false
+          return true
+        })
+
+        setScannedReceipts(filteredData)
+        if (data.imapConfigured && syncEmailConnected) {
+          setReceiptSuccessMsg('Scan complete! Fetched live receipt emails from your inbox.')
+        } else {
+          setReceiptSuccessMsg('Scan complete! Running in DEMO mode with mock receipts.')
+        }
+        setTimeout(() => setReceiptSuccessMsg(''), 4000)
+      } catch (err) {
+        setReceiptsError(err.message || 'Unable to scan digital sources.')
+      } finally {
+        setReceiptsLoading(false)
+      }
+    }, 1500) // 1.5 second scanning animation
+  }
+
+  const handleLinkReceipt = async (receipt, expenseId) => {
+    try {
+      const response = await fetch('/api/receipt-matching/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expenseId: expenseId,
+          receiptSource: receipt.sourceName,
+          receiptStatus: 'MATCHED'
+        })
+      })
+      if (!response.ok) throw new Error('Failed to link receipt.')
+      
+      await fetchExpenses()
+      
+      // Update local state to reflect linked status
+      setScannedReceipts(prev => prev.map(r => {
+        if (r.id === receipt.id) {
+          return { ...r, matchStatus: 'EXACT', matchedExpenseId: expenseId, matchedExpenseTitle: 'Linked Transaction' }
+        }
+        return r
+      }))
+
+      setReceiptSuccessMsg(`Linked ${receipt.merchant} receipt successfully!`)
+      setManualLinkReceipt(null)
+      setTimeout(() => setReceiptSuccessMsg(''), 4000)
+    } catch (err) {
+      console.error(err)
+      alert(err.message)
+    }
+  }
+
+  const handleCreateAndLinkReceipt = async (receipt) => {
+    try {
+      const currentRate = currencies[currencyCode].rate
+      const baseAmount = receipt.amount / currentRate // Save in USD base
+
+      const payload = {
+        title: receipt.merchant,
+        amount: baseAmount,
+        category: 'Shopping', // Default category
+        date: receipt.date,
+        receiptSource: receipt.sourceName
+      }
+      
+      const response = await fetch('/api/receipt-matching/create-and-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!response.ok) throw new Error('Failed to create linked expense.')
+      
+      await fetchExpenses()
+      
+      // Update local state to reflect linked status
+      setScannedReceipts(prev => prev.map(r => {
+        if (r.id === receipt.id) {
+          return { ...r, matchStatus: 'EXACT', matchedExpenseId: 9999, matchedExpenseTitle: receipt.merchant }
+        }
+        return r
+      }))
+
+      setReceiptSuccessMsg(`Created new transaction for ${formatVal(receipt.amount)} and linked receipt successfully!`)
+      setTimeout(() => setReceiptSuccessMsg(''), 4000)
+    } catch (err) {
+      console.error(err)
+      alert(err.message)
+    }
+  }
+
+  const handleAutoMatchAll = async () => {
+    const exactMatches = scannedReceipts.filter(r => r.matchStatus === 'EXACT' && r.matchedExpenseId)
+    if (exactMatches.length === 0) return
+    
+    setReceiptsLoading(true)
+    let linkedCount = 0
+    try {
+      for (const receipt of exactMatches) {
+        const response = await fetch('/api/receipt-matching/link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            expenseId: receipt.matchedExpenseId,
+            receiptSource: receipt.sourceName,
+            receiptStatus: 'MATCHED'
+          })
+        })
+        if (response.ok) {
+          linkedCount++
+        }
+      }
+      
+      await fetchExpenses()
+      
+      // Update local state
+      setScannedReceipts(prev => prev.map(r => {
+        if (r.matchStatus === 'EXACT' && r.matchedExpenseId) {
+          return { ...r, matchedExpenseTitle: 'Linked Transaction' }
+        }
+        return r
+      }))
+      
+      setReceiptSuccessMsg(`Auto-matched and linked ${linkedCount} receipts!`)
+      setTimeout(() => setReceiptSuccessMsg(''), 4000)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setReceiptsLoading(false)
+    }
+  }
+
+  const handleSaveImapSettings = async (e) => {
+    e.preventDefault()
+    setReceiptsLoading(true)
+    setReceiptsError('')
+    try {
+      const response = await fetch('/api/receipt-matching/save-imap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imapHost,
+          imapPort: parseInt(imapPort),
+          imapUsername,
+          imapPassword
+        })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || 'Failed to save settings.')
+      
+      setImapConfigured(true)
+      setShowImapSettings(false)
+      setReceiptSuccessMsg('IMAP settings saved successfully! Run "Scan Channels" to fetch live emails.');
+      setTimeout(() => setReceiptSuccessMsg(''), 4000)
+    } catch (err) {
+      setReceiptsError(err.message || 'Failed to save IMAP configuration.')
+    } finally {
+      setReceiptsLoading(false)
+    }
+  }
+
+  const handleGalleryUpload = async (e) => {
+    if (!e.target.files || e.target.files.length === 0) return
+    const files = e.target.files
+
+    setReceiptsLoading(true)
+    setReceiptsError('')
+    setReceiptSuccessMsg('Processing gallery image uploads using real-time OCR engine...');
+
+    const formData = new FormData()
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i])
+    }
+
+    try {
+      const response = await fetch('/api/receipt-matching/upload-gallery', {
+        method: 'POST',
+        body: formData
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || 'Failed to process gallery files.')
+
+      setScannedReceipts(prev => [...data, ...prev])
+      setReceiptSuccessMsg(`Successfully scanned ${data.length} images with real-time Tesseract OCR and matched them!`);
+      setTimeout(() => setReceiptSuccessMsg(''), 5000)
+    } catch (err) {
+      setReceiptsError(err.message || 'OCR extraction failed. Try a clearer image.')
+    } finally {
+      setReceiptsLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -562,6 +795,16 @@ export default function DashboardPage() {
           </li>
           <li 
             style={{ ...styles.navItem, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }} 
+            className={activeTab === 'receipts' ? 'active' : ''}
+            onClick={() => setActiveTab('receipts')}
+          >
+            <a href="#" style={styles.navLink}>
+              <i className="fa-solid fa-wand-magic-sparkles" style={styles.navIcon}></i>
+              {!sidebarCollapsed && <span>Auto-Receipts</span>}
+            </a>
+          </li>
+          <li 
+            style={{ ...styles.navItem, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }} 
             className={activeTab === 'settings' ? 'active' : ''}
             onClick={() => setActiveTab('settings')}
           >
@@ -968,6 +1211,11 @@ export default function DashboardPage() {
                                 {(exp.isSubscription || exp.subscription) && (
                                   <span style={styles.recurringBadge}>
                                     <i className="fa-solid fa-arrows-spin"></i> Recurring
+                                  </span>
+                                )}
+                                {exp.receiptSource && (
+                                  <span style={styles.receiptLinkedBadge} title={`Linked to receipt: ${exp.receiptSource}`}>
+                                    <i className="fa-solid fa-paperclip"></i> Receipt
                                   </span>
                                 )}
                               </div>
@@ -1485,6 +1733,385 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Render Auto-Receipt Matching Tab */}
+        {activeTab === 'receipts' && (
+          <div>
+            <div style={styles.dashboardHeader}>
+              <div>
+                <h2 style={styles.welcomeGreeting}>Auto-Receipt Matching Hub</h2>
+                <p style={styles.headerSubtitle}>Scan email inboxes and phone galleries to automatically match digital receipts with bank account transactions.</p>
+              </div>
+            </div>
+
+            {receiptSuccessMsg && (
+              <div style={{ ...styles.formErrorAlert, background: '#d1fae5', color: 'var(--success)', borderLeft: '4px solid var(--success)', marginBottom: '24px', animation: 'slideDown 0.3s ease' }}>
+                <i className="fa-solid fa-circle-check" style={{ marginRight: '8px' }}></i>
+                {receiptSuccessMsg}
+              </div>
+            )}
+
+            {receiptsError && (
+              <div style={{ ...styles.formErrorAlert, marginBottom: '24px', animation: 'slideDown 0.3s ease' }}>
+                <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: '8px' }}></i>
+                {receiptsError}
+              </div>
+            )}
+
+            {/* Sync Sources Panel */}
+            <div style={{ ...styles.dashboardSplit, marginBottom: '24px' }}>
+              <div style={{ ...styles.sectionPanel, flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h3 style={{ ...styles.panelTitle, margin: 0 }}>
+                    <i className="fa-solid fa-envelope-open-text" style={{ color: 'var(--brand-primary)', marginRight: '8px' }}></i>
+                    Email Inbox Scan
+                  </h3>
+                  <label style={styles.switchContainer}>
+                    <input 
+                      type="checkbox" 
+                      checked={syncEmailConnected} 
+                      onChange={(e) => setSyncEmailConnected(e.target.checked)}
+                      style={styles.switchInput}
+                    />
+                    <span style={{ ...styles.switchSlider, backgroundColor: syncEmailConnected ? 'var(--brand-primary)' : '#cbd5e1' }}></span>
+                  </label>
+                </div>
+                <p style={styles.panelDesc}>Connects securely to your live IMAP account (e.g. Gmail App Password) to extract receipt details.</p>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', marginBottom: '12px' }}>
+                  <span style={{ ...styles.pulseStatus, background: syncEmailConnected && imapConfigured ? 'var(--success)' : 'var(--warning)' }}></span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-slate)' }}>
+                    {!syncEmailConnected ? 'Sync Channel Disabled' : imapConfigured ? `Connected (${imapUsername})` : 'Credentials Required (Demo Mode)'}
+                  </span>
+                </div>
+
+                {syncEmailConnected && (
+                  <div style={{ marginTop: '12px' }}>
+                    <button 
+                      onClick={() => setShowImapSettings(!showImapSettings)} 
+                      className="btn-ui btn-outline" 
+                      style={{ padding: '8px 12px', fontSize: '12.5px', width: '100%', marginBottom: '10px' }}
+                    >
+                      <i className="fa-solid fa-gears"></i> {imapConfigured ? 'Update IMAP Credentials' : 'Link Secure IMAP Server'}
+                    </button>
+                  </div>
+                )}
+
+                {showImapSettings && (
+                  <form onSubmit={handleSaveImapSettings} style={styles.imapForm}>
+                    <div className="input-group" style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '11.5px' }}>IMAP Host Address</label>
+                      <input 
+                        type="text" 
+                        className="input-control" 
+                        style={{ padding: '8px', fontSize: '13px' }}
+                        placeholder="e.g. imap.gmail.com" 
+                        value={imapHost} 
+                        onChange={(e) => setImapHost(e.target.value)} 
+                        required 
+                      />
+                    </div>
+                    <div className="input-group" style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '11.5px' }}>IMAP Port Number</label>
+                      <input 
+                        type="number" 
+                        className="input-control" 
+                        style={{ padding: '8px', fontSize: '13px' }}
+                        placeholder="993" 
+                        value={imapPort} 
+                        onChange={(e) => setImapPort(e.target.value)} 
+                        required 
+                      />
+                    </div>
+                    <div className="input-group" style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '11.5px' }}>Email Address</label>
+                      <input 
+                        type="email" 
+                        className="input-control" 
+                        style={{ padding: '8px', fontSize: '13px' }}
+                        placeholder="user@example.com" 
+                        value={imapUsername} 
+                        onChange={(e) => setImapUsername(e.target.value)} 
+                        required 
+                      />
+                    </div>
+                    <div className="input-group" style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '11.5px' }}>App Password / Security Token</label>
+                      <input 
+                        type="password" 
+                        className="input-control" 
+                        style={{ padding: '8px', fontSize: '13px' }}
+                        placeholder="e.g. abcd-efgh-ijkl-mnop" 
+                        value={imapPassword} 
+                        onChange={(e) => setImapPassword(e.target.value)} 
+                        required 
+                      />
+                    </div>
+                    <button type="submit" className="btn-ui btn-solid" style={{ width: '100%', padding: '8px', fontSize: '13px' }}>
+                      <i className="fa-solid fa-shield-halved"></i> Save IMAP Credentials
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              <div style={{ ...styles.sectionPanel, flex: 1 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h3 style={{ ...styles.panelTitle, margin: 0 }}>
+                    <i className="fa-solid fa-images" style={{ color: 'var(--brand-primary)', marginRight: '8px' }}></i>
+                    Phone Gallery Sync
+                  </h3>
+                  <label style={styles.switchContainer}>
+                    <input 
+                      type="checkbox" 
+                      checked={syncGalleryConnected} 
+                      onChange={(e) => setSyncGalleryConnected(e.target.checked)}
+                      style={styles.switchInput}
+                    />
+                    <span style={{ ...styles.switchSlider, backgroundColor: syncGalleryConnected ? 'var(--brand-primary)' : '#cbd5e1' }}></span>
+                  </label>
+                </div>
+                <p style={styles.panelDesc}>Allows uploading physical photos of receipts. Tesseract OCR will read, digitize, and match details.</p>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', marginBottom: '12px' }}>
+                  <span style={{ ...styles.pulseStatus, background: syncGalleryConnected ? 'var(--success)' : 'var(--danger)' }}></span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-slate)' }}>
+                    {syncGalleryConnected ? 'Local Sandbox Sync Active' : 'Gallery Scanning Disabled'}
+                  </span>
+                </div>
+
+                {syncGalleryConnected && (
+                  <div style={{ marginTop: '12px' }}>
+                    <div style={styles.uploadBtnWrapper}>
+                      <button className="btn-ui btn-outline" style={{ width: '100%', padding: '8px 12px', fontSize: '12.5px' }}>
+                        <i className="fa-solid fa-camera-retro"></i> Select Gallery Receipt Photos
+                      </button>
+                      <input 
+                        type="file" 
+                        multiple 
+                        accept="image/*" 
+                        onChange={handleGalleryUpload} 
+                        style={styles.hiddenFileInput}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Sync Trigger and Control Bar */}
+            <div style={styles.receiptActionPanel}>
+              <button 
+                onClick={handleScanReceipts} 
+                className="btn-ui btn-solid" 
+                disabled={receiptsLoading}
+                style={{ minWidth: '180px' }}
+              >
+                {receiptsLoading ? (
+                  <>
+                    <i className="fa-solid fa-arrows-spin fa-spin"></i> Syncing Channels...
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-rotate"></i> Scan Channels
+                  </>
+                )}
+              </button>
+
+              {scannedReceipts.filter(r => r.matchStatus === 'EXACT').length > 0 && (
+                <button 
+                  onClick={handleAutoMatchAll} 
+                  className="btn-ui btn-success"
+                  disabled={receiptsLoading}
+                  style={{ animation: 'pulseBorder 2s infinite' }}
+                >
+                  <i className="fa-solid fa-bolt"></i> Auto-Link Exact Matches ({scannedReceipts.filter(r => r.matchStatus === 'EXACT').length})
+                </button>
+              )}
+            </div>
+
+            {/* Receipts Listing */}
+            {receiptsLoading && (
+              <div style={styles.receiptScanLoader}>
+                <div style={styles.loaderPulseBar}></div>
+                <p style={{ fontWeight: 600, color: 'var(--brand-primary)', marginTop: '12px' }}>
+                  Connecting to secure IMAP servers and device sandboxes...
+                </p>
+              </div>
+            )}
+
+            {!receiptsLoading && scannedReceipts.length === 0 && (
+              <div style={styles.receiptEmptyCard}>
+                <i className="fa-solid fa-magnifying-glass-dollar" style={{ fontSize: '48px', color: 'var(--text-muted)', marginBottom: '16px' }}></i>
+                <h4 style={{ fontWeight: 700, fontSize: '18px', color: 'var(--brand-dark)', marginBottom: '8px' }}>No Scanned Records Loaded</h4>
+                <p style={{ color: 'var(--text-muted)', fontSize: '14px', maxWidth: '400px', margin: '0 auto 20px' }}>
+                  Connect your accounts and click "Scan Channels" above to look for digital receipt artifacts.
+                </p>
+                <button onClick={handleScanReceipts} className="btn-ui btn-outline">
+                  <i className="fa-solid fa-radar"></i> Run Initial Sync Scan
+                </button>
+              </div>
+            )}
+
+            {!receiptsLoading && scannedReceipts.length > 0 && (
+              <div>
+                {/* Status Filters */}
+                <div style={styles.receiptFilterRow}>
+                  {['all', 'exact', 'partial', 'none'].map((status) => {
+                    const count = status === 'all' 
+                      ? scannedReceipts.length 
+                      : scannedReceipts.filter(r => r.matchStatus.toLowerCase() === status).length;
+                    const isActive = receiptFilter === status;
+                    return (
+                      <button 
+                        key={status}
+                        onClick={() => setReceiptFilter(status)}
+                        style={{
+                          ...styles.receiptFilterTab,
+                          background: isActive ? 'var(--brand-primary)' : 'var(--card-bg)',
+                          color: isActive ? 'white' : 'var(--text-slate)',
+                          border: isActive ? 'none' : '1px solid var(--border)'
+                        }}
+                      >
+                        {status.toUpperCase()} ({count})
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Scanned Items grid */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {scannedReceipts
+                    .filter(receipt => receiptFilter === 'all' || receipt.matchStatus.toLowerCase() === receiptFilter)
+                    .map(receipt => {
+                      const isExact = receipt.matchStatus === 'EXACT';
+                      const isPartial = receipt.matchStatus === 'PARTIAL';
+                      const isNone = receipt.matchStatus === 'NONE';
+
+                      return (
+                        <div key={receipt.id} style={{ ...styles.receiptCard, borderLeft: isExact ? '5px solid var(--success)' : isPartial ? '5px solid var(--warning)' : '5px solid var(--danger)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
+                            <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                              <div style={{
+                                ...styles.receiptSourceIcon,
+                                background: receipt.source === 'EMAIL' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                                color: receipt.source === 'EMAIL' ? 'var(--brand-primary)' : 'var(--success)'
+                              }}>
+                                <i className={receipt.source === 'EMAIL' ? "fa-solid fa-envelope" : "fa-solid fa-image"}></i>
+                              </div>
+                              <div>
+                                <h4 style={{ fontWeight: 700, fontSize: '16px', margin: '0 0 4px 0', color: 'var(--brand-dark)' }}>{receipt.merchant}</h4>
+                                <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 4px 0' }}>{receipt.sourceName}</p>
+                                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-slate)', marginRight: '12px' }}>
+                                  <i className="fa-solid fa-calendar-day" style={{ marginRight: '4px' }}></i> {receipt.date}
+                                </span>
+                                <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--brand-dark)' }}>
+                                  Amount: {currencies[currencyCode].symbol}{(receipt.amount * currencies[currencyCode].rate).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', gap: '8px' }}>
+                              {isExact && (
+                                <>
+                                  <span style={styles.badgeExact}>
+                                    <i className="fa-solid fa-circle-check"></i> Exact Match Found
+                                  </span>
+                                  {receipt.matchedExpenseId && (
+                                    <span style={{ fontSize: '12.5px', color: 'var(--text-slate)' }}>
+                                      Matches <strong>{receipt.matchedExpenseTitle}</strong>
+                                    </span>
+                                  )}
+                                  {receipt.matchedExpenseTitle !== 'Linked Transaction' && (
+                                    <button 
+                                      onClick={() => handleLinkReceipt(receipt, receipt.matchedExpenseId)}
+                                      className="btn-ui btn-solid"
+                                      style={{ padding: '6px 12px', fontSize: '12px' }}
+                                    >
+                                      Link & Verify
+                                    </button>
+                                  )}
+                                </>
+                              )}
+
+                              {isPartial && (
+                                <>
+                                  <span style={styles.badgePartial}>
+                                    <i className="fa-solid fa-circle-exclamation"></i> Potential Match
+                                  </span>
+                                  {receipt.matchedExpenseId && (
+                                    <span style={{ fontSize: '12.5px', color: 'var(--text-slate)' }}>
+                                      Matches <strong>{receipt.matchedExpenseTitle}</strong> (Verify amount/date)
+                                    </span>
+                                  )}
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button 
+                                      onClick={() => handleLinkReceipt(receipt, receipt.matchedExpenseId)}
+                                      className="btn-ui btn-solid"
+                                      style={{ padding: '6px 12px', fontSize: '12px', background: 'var(--warning)', boxShadow: 'none' }}
+                                    >
+                                      Confirm Match
+                                    </button>
+                                    <button 
+                                      onClick={() => setManualLinkReceipt(manualLinkReceipt === receipt.id ? null : receipt.id)}
+                                      className="btn-ui btn-outline"
+                                      style={{ padding: '6px 12px', fontSize: '12px', borderColor: 'var(--text-muted)', color: 'var(--text-muted)' }}
+                                    >
+                                      Choose Custom
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+
+                              {isNone && (
+                                <>
+                                  <span style={styles.badgeNone}>
+                                    <i className="fa-solid fa-circle-question"></i> No Bank Record
+                                  </span>
+                                  <button 
+                                    onClick={() => handleCreateAndLinkReceipt(receipt)}
+                                    className="btn-ui btn-solid"
+                                    style={{ padding: '8px 16px', fontSize: '12px' }}
+                                  >
+                                    Log as Bank Transaction
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Manual Selection Interface */}
+                          {manualLinkReceipt === receipt.id && (
+                            <div style={styles.manualLinkPanel}>
+                              <h5 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: 'var(--brand-dark)' }}>
+                                Select transaction from ledger matching: {currencies[currencyCode].symbol}{(receipt.amount * currencies[currencyCode].rate).toFixed(2)}
+                              </h5>
+                              <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {expenses.filter(e => !e.receiptSource).map(exp => (
+                                  <div 
+                                    key={exp.id} 
+                                    onClick={() => handleLinkReceipt(receipt, exp.id)}
+                                    style={styles.manualLinkItem}
+                                  >
+                                    <span><strong>{exp.title}</strong> ({exp.category}) - {exp.date}</span>
+                                    <strong>{formatVal(exp.amount)}</strong>
+                                  </div>
+                                ))}
+                                {expenses.filter(e => !e.receiptSource).length === 0 && (
+                                  <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', textAlign: 'center', padding: '8px' }}>
+                                    No unmatched bank line items found.
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
       </div>
     </div>
   )
@@ -1925,6 +2552,193 @@ const styles = {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '4px',
+  },
+  receiptLinkedBadge: {
+    fontSize: '10.5px',
+    background: '#ecfdf5',
+    color: '#10b981',
+    padding: '2px 8px',
+    borderRadius: '6px',
+    fontWeight: '700',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    marginLeft: '6px',
+  },
+  switchContainer: {
+    position: 'relative',
+    display: 'inline-block',
+    width: '40px',
+    height: '20px',
+  },
+  switchInput: {
+    opacity: 0,
+    width: 0,
+    height: 0,
+  },
+  switchSlider: {
+    position: 'absolute',
+    cursor: 'pointer',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    transition: '.3s',
+    borderRadius: '20px',
+  },
+  pulseStatus: {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    display: 'inline-block',
+    boxShadow: '0 0 0 0 rgba(16, 185, 129, 0.4)',
+    animation: 'pulseBorder 1.5s infinite',
+  },
+  receiptActionPanel: {
+    display: 'flex',
+    gap: '16px',
+    alignItems: 'center',
+    background: 'var(--card-bg)',
+    padding: '16px',
+    borderRadius: '12px',
+    border: '1px solid var(--border)',
+    marginBottom: '24px',
+  },
+  receiptScanLoader: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '40px',
+    background: 'var(--card-bg)',
+    border: '1px solid var(--border)',
+    borderRadius: '12px',
+    textAlign: 'center',
+    animation: 'fadeIn 0.3s ease',
+  },
+  loaderPulseBar: {
+    width: '120px',
+    height: '4px',
+    background: 'var(--brand-primary)',
+    borderRadius: '2px',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  receiptEmptyCard: {
+    padding: '60px 40px',
+    textAlign: 'center',
+    background: 'var(--card-bg)',
+    border: '2px dashed var(--border)',
+    borderRadius: '16px',
+    animation: 'fadeIn 0.3s ease',
+  },
+  receiptFilterRow: {
+    display: 'flex',
+    gap: '10px',
+    marginBottom: '20px',
+    flexWrap: 'wrap',
+  },
+  receiptFilterTab: {
+    padding: '8px 16px',
+    fontSize: '12.5px',
+    fontWeight: 700,
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+  },
+  receiptCard: {
+    background: 'var(--card-bg)',
+    border: '1px solid var(--border)',
+    borderRadius: '12px',
+    padding: '18px',
+    boxShadow: 'var(--shadow-sm)',
+    transition: 'transform 0.2s, box-shadow 0.2s',
+    animation: 'fadeIn 0.3s ease',
+  },
+  receiptSourceIcon: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '10px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '18px',
+  },
+  badgeExact: {
+    fontSize: '12px',
+    background: '#ecfdf5',
+    color: '#047857',
+    padding: '4px 10px',
+    borderRadius: '20px',
+    fontWeight: 700,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  badgePartial: {
+    fontSize: '12px',
+    background: '#fffbeb',
+    color: '#b45309',
+    padding: '4px 10px',
+    borderRadius: '20px',
+    fontWeight: 700,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  badgeNone: {
+    fontSize: '12px',
+    background: '#fef2f2',
+    color: '#b91c1c',
+    padding: '4px 10px',
+    borderRadius: '20px',
+    fontWeight: 700,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  manualLinkPanel: {
+    marginTop: '16px',
+    padding: '14px',
+    background: 'var(--brand-light)',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+    animation: 'slideDown 0.2s ease',
+  },
+  manualLinkItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '10px 14px',
+    background: 'var(--card-bg)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    transition: 'all 0.2s',
+  },
+  imapForm: {
+    background: 'var(--brand-light)',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+    padding: '12px',
+    marginTop: '10px',
+    animation: 'slideDown 0.25s ease',
+  },
+  uploadBtnWrapper: {
+    position: 'relative',
+    overflow: 'hidden',
+    display: 'inline-block',
+    width: '100%',
+  },
+  hiddenFileInput: {
+    fontSize: '100px',
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    opacity: 0,
+    cursor: 'pointer',
+    width: '100%',
+    height: '100%',
   },
   dateCell: {
     fontSize: '12px',
