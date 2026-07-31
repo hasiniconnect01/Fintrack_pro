@@ -81,6 +81,9 @@ public class ReceiptMatchingController {
         // Apply matching engine to scanned receipts
         runMatchingEngine(scannedReceipts, expenses);
 
+        // Auto-record unmatched receipts into the database
+        autoRecordUnmatchedReceipts(scannedReceipts, currentUser);
+
         Map<String, Object> response = new HashMap<>();
         response.put("receipts", scannedReceipts);
         response.put("imapConfigured", isImapConfigured);
@@ -126,6 +129,9 @@ public class ReceiptMatchingController {
 
         // Match uploaded receipts
         runMatchingEngine(uploadedReceipts, expenses);
+
+        // Auto-record unmatched receipts into the database
+        autoRecordUnmatchedReceipts(uploadedReceipts, currentUser);
 
         return ResponseEntity.ok(uploadedReceipts);
     }
@@ -212,6 +218,48 @@ public class ReceiptMatchingController {
                 receipt.setMatchStatus(bestStatus);
                 receipt.setMatchedExpenseId(bestMatch.getId());
                 receipt.setMatchedExpenseTitle(bestMatch.getTitle());
+            }
+        }
+    }
+
+    private void autoRecordUnmatchedReceipts(List<ScannedReceipt> receipts, user currentUser) {
+        for (ScannedReceipt receipt : receipts) {
+            if (receipt.getMatchedExpenseId() == null 
+                    && receipt.getMerchant() != null 
+                    && !receipt.getMerchant().trim().isEmpty() 
+                    && receipt.getAmount() > 0) {
+                // Automatically create expense in database
+                Expense autoExpense = new Expense();
+                autoExpense.setTitle(receipt.getMerchant());
+                autoExpense.setAmount(receipt.getAmount());
+                autoExpense.setDate(LocalDate.parse(receipt.getDate()));
+
+                // Set category based on merchant
+                String category = "Other";
+                String merchantLower = receipt.getMerchant().toLowerCase();
+                if (merchantLower.contains("uber") || merchantLower.contains("taxi") || merchantLower.contains("ride")) {
+                    autoExpense.setCategory("Transportation");
+                } else if (merchantLower.contains("netflix") || merchantLower.contains("spotify") || merchantLower.contains("steam")) {
+                    autoExpense.setCategory("Entertainment");
+                } else if (merchantLower.contains("starbucks") || merchantLower.contains("mcdonald") || merchantLower.contains("food") || merchantLower.contains("coffee")) {
+                    autoExpense.setCategory("Food");
+                } else if (merchantLower.contains("amazon") || merchantLower.contains("apple") || merchantLower.contains("google")) {
+                    autoExpense.setCategory("Shopping");
+                } else {
+                    autoExpense.setCategory(category);
+                }
+
+                autoExpense.setUser(currentUser);
+                autoExpense.setReceiptSource(receipt.getSourceName());
+                autoExpense.setReceiptStatus("MATCHED");
+                autoExpense.setIsSubscription(merchantLower.contains("netflix") || merchantLower.contains("spotify"));
+
+                Expense saved = expenseRepository.save(autoExpense);
+
+                // Update scanned receipt matched fields
+                receipt.setMatchStatus("EXACT");
+                receipt.setMatchedExpenseId(saved.getId());
+                receipt.setMatchedExpenseTitle(saved.getTitle());
             }
         }
     }

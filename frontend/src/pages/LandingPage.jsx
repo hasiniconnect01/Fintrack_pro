@@ -86,7 +86,7 @@ export default function LandingPage() {
       <header style={styles.navbar} className="glass-panel">
         <div style={styles.logo}>
           <i className="fa-solid fa-money-bill-trend-up" style={styles.logoIcon}></i>
-          <span className="gradient-heading" style={{ fontWeight: 800 }}>FinTrack Enterprise</span>
+          <span className="gradient-heading" style={{ fontWeight: 800 }}>FinTrack Pro</span>
         </div>
         <nav style={styles.nav}>
           <a href="#about" style={styles.navLink}>About Platform</a>

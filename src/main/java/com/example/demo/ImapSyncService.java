@@ -15,6 +15,9 @@ import java.util.regex.Pattern;
 @Service
 public class ImapSyncService {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private OcrService ocrService;
+
     public List<ScannedReceipt> fetchReceiptsFromEmail(String host, int port, String username, String password) throws Exception {
         List<ScannedReceipt> receipts = new ArrayList<>();
 
@@ -47,7 +50,9 @@ public class ImapSyncService {
             new SubjectTerm("payment"),
             new SubjectTerm("uber"),
             new SubjectTerm("netflix"),
-            new SubjectTerm("starbucks")
+            new SubjectTerm("starbucks"),
+            new SubjectTerm("eat club"),
+            new SubjectTerm("eatclub")
         };
         SearchTerm searchOr = new OrTerm(terms);
 
@@ -77,9 +82,27 @@ public class ImapSyncService {
                 ? sentDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDate().format(formatter) 
                 : java.time.LocalDate.now().toString();
 
-            String merchant = parseMerchantFromSubjectOrSender(subject, msg.getFrom());
             String bodyText = getEmailBody(msg);
-            double amount = parseAmount(subject + "\n" + bodyText);
+            List<String> attachmentTexts = new ArrayList<>();
+            try {
+                processAttachments(msg, attachmentTexts);
+            } catch (Exception e) {
+                System.err.println("Error processing attachments: " + e.getMessage());
+            }
+
+            StringBuilder fullTextBuilder = new StringBuilder();
+            fullTextBuilder.append(subject).append("\n");
+            if (msg.getFrom() != null && msg.getFrom().length > 0) {
+                fullTextBuilder.append(msg.getFrom()[0].toString()).append("\n");
+            }
+            fullTextBuilder.append(bodyText);
+            for (String attText : attachmentTexts) {
+                fullTextBuilder.append("\n").append(attText);
+            }
+            String fullText = fullTextBuilder.toString();
+
+            String merchant = parseMerchantFromFullText(fullText, msg.getFrom(), subject);
+            double amount = parseAmount(fullText);
 
             String id = "email-real-" + msg.getMessageNumber() + "-" + (sentDate != null ? sentDate.getTime() : System.currentTimeMillis());
             String sourceName = "Email: " + subject;
@@ -92,11 +115,8 @@ public class ImapSyncService {
         return receipts;
     }
 
-    private String parseMerchantFromSubjectOrSender(String subject, Address[] fromAddresses) {
-        String combined = subject.toLowerCase();
-        if (fromAddresses != null && fromAddresses.length > 0) {
-            combined += " " + fromAddresses[0].toString().toLowerCase();
-        }
+    private String parseMerchantFromFullText(String fullText, Address[] fromAddresses, String subject) {
+        String combined = fullText.toLowerCase();
 
         if (combined.contains("uber")) return "Uber";
         if (combined.contains("netflix")) return "Netflix";
@@ -108,6 +128,7 @@ public class ImapSyncService {
         if (combined.contains("steam")) return "Steam";
         if (combined.contains("mcdonald")) return "McDonald's";
         if (combined.contains("whole foods")) return "Whole Foods";
+        if (combined.contains("eat club") || combined.contains("eatclub")) return "Eat Club";
         
         if (fromAddresses != null && fromAddresses.length > 0) {
             String from = fromAddresses[0].toString();
@@ -118,6 +139,44 @@ public class ImapSyncService {
             return from;
         }
         return "Unknown Merchant";
+    }
+
+    private void processAttachments(Part part, List<String> extractedTexts) throws MessagingException, IOException {
+        if (part.isMimeType("multipart/*")) {
+            Multipart multipart = (Multipart) part.getContent();
+            int count = multipart.getCount();
+            for (int i = 0; i < count; i++) {
+                processAttachments(multipart.getBodyPart(i), extractedTexts);
+            }
+        } else {
+            String fileName = part.getFileName();
+            if (fileName != null && !fileName.trim().isEmpty()) {
+                String contentType = part.getContentType().toLowerCase();
+                if (contentType.contains("image/") || fileName.toLowerCase().endsWith(".png") 
+                        || fileName.toLowerCase().endsWith(".jpg") || fileName.toLowerCase().endsWith(".jpeg")) {
+                    try (java.io.InputStream is = part.getInputStream()) {
+                        ReceiptResponse response = ocrService.processReceipt(is);
+                        if (response != null) {
+                            String text = "Attachment OCR Merchant: " + response.getMerchant() 
+                                    + " Amount: " + response.getTotalAmount() 
+                                    + " Date: " + response.getDate();
+                            extractedTexts.add(text);
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Failed to OCR attachment " + fileName + ": " + e.getMessage());
+                    }
+                } else if (contentType.contains("pdf") || fileName.toLowerCase().endsWith(".pdf")) {
+                    try (java.io.InputStream is = part.getInputStream();
+                         org.apache.pdfbox.pdmodel.PDDocument document = org.apache.pdfbox.pdmodel.PDDocument.load(is)) {
+                        org.apache.pdfbox.text.PDFTextStripper stripper = new org.apache.pdfbox.text.PDFTextStripper();
+                        String pdfText = stripper.getText(document);
+                        extractedTexts.add("Attachment PDF text: " + pdfText);
+                    } catch (Exception e) {
+                        System.err.println("Failed to parse PDF attachment " + fileName + ": " + e.getMessage());
+                    }
+                }
+            }
+        }
     }
 
     private double parseAmount(String text) {

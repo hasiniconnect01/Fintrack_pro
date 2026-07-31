@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 export default function DashboardPage() {
+  const lastSpeechTimeRef = useRef(0)
   const [user, setUser] = useState(null)
   const [expenses, setExpenses] = useState([])
   const [loading, setLoading] = useState(true)
@@ -86,6 +87,14 @@ export default function DashboardPage() {
   const [settingsBudget, setSettingsBudget] = useState('')
   const [settingsSuccess, setSettingsSuccess] = useState('')
   const [settingsError, setSettingsError] = useState('')
+
+  // Chatbot State
+  const [chatMessages, setChatMessages] = useState([
+    { sender: 'bot', text: '👋 Hello! I am your FinTrack Pro AI Assistant. Speak or type your transaction details (e.g. "I spent 1500 INR on Starbucks today") and I will record it instantly!' }
+  ])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
 
   // UI State
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
@@ -561,6 +570,40 @@ export default function DashboardPage() {
     localStorage.setItem(`fintrack_invoices_${user.email}`, JSON.stringify(updated))
   }
 
+  const handleDownloadInvoice = (inv) => {
+    const currency = currencies[currencyCode].symbol
+    const rate = currencies[currencyCode].rate
+    const invoiceContent = `
+==================================================
+                 FINTRACK PRO BILL                
+==================================================
+Bill ID: FT-BILL-${inv.id}
+Date Issued: ${new Date().toLocaleDateString()}
+Due Date: ${inv.dueDate}
+Status: PAID / SETTLED
+
+BILLING TO:
+Client Corporate Name: ${inv.clientName}
+Client Contact Email: ${inv.clientEmail}
+
+TRANSACTION VALUE:
+Amount: ${currency}${(inv.amount * rate).toFixed(2)}
+
+Thank you for your business!
+==================================================
+`.trim();
+
+    const blob = new Blob([invoiceContent], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `Bill_${inv.clientName.replace(/\s+/g, '_')}_${inv.id}.txt`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
   // Wallet Fund Transfer Management
   const handleTransfer = (e) => {
     e.preventDefault()
@@ -636,7 +679,12 @@ export default function DashboardPage() {
         body: JSON.stringify({ budget: baseBudget })
       })
 
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.message || 'Failed to update budget.')
+      }
 
+      const data = await response.json()
       setUser(data)
       setSettingsSuccess('Monthly Capital Allocation updated successfully in database!')
     } catch (err) {
@@ -652,6 +700,112 @@ export default function DashboardPage() {
       const currentRate = currencies[newCode].rate
       const baseBudget = user.monthlyBudget
       setSettingsBudget((baseBudget * currentRate).toFixed(2))
+    }
+  }
+
+  const handleSendChatMessage = async (e) => {
+    if (e) e.preventDefault()
+    if (!chatInput.trim() || chatLoading) return
+
+    const userText = chatInput.trim()
+    setChatMessages(prev => [...prev, { sender: 'user', text: userText }])
+    setChatInput('')
+    setChatLoading(true)
+
+    try {
+      const response = await fetch('/api/chatbot/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userText })
+      })
+      if (!response.ok) throw new Error('API failure')
+      const data = await response.json()
+      
+      setChatMessages(prev => [...prev, { sender: 'bot', text: data.response }])
+      speakText(data.response)
+
+      if (data.recorded) {
+        fetchExpenses()
+      }
+    } catch (err) {
+      setChatMessages(prev => [...prev, { sender: 'bot', text: '⚠️ Unable to reach the AI engine. Check your server connection.' }])
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const sendSpeechMessage = async (text) => {
+    setChatLoading(true)
+    try {
+      const response = await fetch('/api/chatbot/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      })
+      if (!response.ok) throw new Error('API failure')
+      const data = await response.json()
+      
+      setChatMessages(prev => [...prev, { sender: 'bot', text: data.response }])
+      speakText(data.response)
+
+      if (data.recorded) {
+        fetchExpenses()
+      }
+    } catch (err) {
+      setChatMessages(prev => [...prev, { sender: 'bot', text: '⚠️ Unable to reach the AI engine. Check your server connection.' }])
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const startVoiceRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser. Try Google Chrome or Microsoft Edge.")
+      return
+    }
+    const recognition = new SpeechRecognition()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = 'en-US'
+
+    recognition.onstart = () => {
+      setIsRecording(true)
+    }
+
+    recognition.onresult = (event) => {
+      const now = Date.now()
+      if (now - lastSpeechTimeRef.current < 3000) {
+        return
+      }
+      const transcript = event.results[0][0].transcript
+      if (transcript && transcript.trim() && !chatLoading) {
+        lastSpeechTimeRef.current = now
+        recognition.stop() // Prevent duplicate triggers immediately
+        setChatMessages(prev => [...prev, { sender: 'user', text: transcript }])
+        sendSpeechMessage(transcript.trim())
+      }
+    }
+
+    recognition.onerror = (e) => {
+      console.error(e)
+      setIsRecording(false)
+    }
+
+    recognition.onend = () => {
+      setIsRecording(false)
+    }
+
+    recognition.start()
+  }
+
+  const speakText = (text) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+      const cleanText = text.replace(/\*\*|[\*#`_]/g, '')
+      const utterance = new SpeechSynthesisUtterance(cleanText)
+      utterance.lang = 'en-US'
+      window.speechSynthesis.speak(utterance)
     }
   }
 
@@ -672,11 +826,18 @@ export default function DashboardPage() {
   const grandTotal = totalSpent + totalSubscriptions
   const remainingBalance = monthlyBudget - grandTotal
 
-  // Filter Expense ledger
+  // Filter Expense ledger and sort by date descending (newest first)
   const filteredExpenses = expenses.filter(exp => {
     const matchesSearch = (exp.title || '').toLowerCase().includes(searchQuery.toLowerCase())
     const matchesCategory = activeCategory === 'All' || exp.category === activeCategory
     return matchesSearch && matchesCategory
+  }).sort((a, b) => {
+    const dateA = new Date(a.date || 0)
+    const dateB = new Date(b.date || 0)
+    if (dateB.getTime() !== dateA.getTime()) {
+      return dateB.getTime() - dateA.getTime()
+    }
+    return (b.id || 0) - (a.id || 0)
   })
 
   const userEmail = user ? user.email : 'user@fintrack.com'
@@ -777,6 +938,16 @@ export default function DashboardPage() {
           </li>
           <li 
             style={{ ...styles.navItem, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }} 
+            className={activeTab === 'insights' ? 'active' : ''}
+            onClick={() => setActiveTab('insights')}
+          >
+            <a href="#" style={styles.navLink}>
+              <i className="fa-solid fa-brain" style={styles.navIcon}></i>
+              {!sidebarCollapsed && <span>AI Insights</span>}
+            </a>
+          </li>
+          <li 
+            style={{ ...styles.navItem, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }} 
             className={activeTab === 'invoices' ? 'active' : ''}
             onClick={() => setActiveTab('invoices')}
           >
@@ -803,6 +974,16 @@ export default function DashboardPage() {
             <a href="#" style={styles.navLink}>
               <i className="fa-solid fa-wand-magic-sparkles" style={styles.navIcon}></i>
               {!sidebarCollapsed && <span>Auto-Receipts</span>}
+            </a>
+          </li>
+          <li 
+            style={{ ...styles.navItem, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }} 
+            className={activeTab === 'assistant' ? 'active' : ''}
+            onClick={() => setActiveTab('assistant')}
+          >
+            <a href="#" style={styles.navLink}>
+              <i className="fa-solid fa-comment-dots" style={styles.navIcon}></i>
+              {!sidebarCollapsed && <span>AI Assistant</span>}
             </a>
           </li>
           <li 
@@ -907,7 +1088,7 @@ export default function DashboardPage() {
 
             {/* Metrics Overview Cards */}
             <div style={styles.metricsGrid}>
-              <div className="stat-card glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px' }}>
+              <div className="stat-card glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px', position: 'relative' }}>
                 <div style={styles.metricInfo}>
                   <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Monthly Capital Allocation</h4>
                   <p style={{ fontSize: '24px', fontWeight: '800' }} className="gradient-heading">{formatVal(monthlyBudget)}</p>
@@ -917,7 +1098,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="stat-card glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px' }}>
+              <div className="stat-card glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px', position: 'relative' }}>
                 <div style={styles.metricInfo}>
                   <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Aggregate Spending Sum</h4>
                   <p style={{ fontSize: '24px', fontWeight: '800', color: '#db2777' }}>{formatVal(totalSpent)}</p>
@@ -927,7 +1108,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="stat-card stat-card-danger glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px' }}>
+              <div className="stat-card stat-card-danger glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px', position: 'relative' }}>
                 <div style={styles.metricInfo}>
                   <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Active Renewals</h4>
                   <p style={{ fontSize: '24px', fontWeight: '800', color: '#db2777' }}>{formatVal(totalSubscriptions)}</p>
@@ -937,7 +1118,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className={`stat-card ${remainingBalance < 0 ? 'stat-card-danger' : 'stat-card-success'} glass-panel card-interactive animate-fade-in-up`} style={{ ...styles.metricCard, padding: '24px' }}>
+              <div className={`stat-card ${remainingBalance < 0 ? 'stat-card-danger' : 'stat-card-success'} glass-panel card-interactive animate-fade-in-up`} style={{ ...styles.metricCard, padding: '24px', position: 'relative' }}>
                 <div style={styles.metricInfo}>
                   <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Liquid Running Balance</h4>
                   <p style={{ fontSize: '24px', fontWeight: '800', color: remainingBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
@@ -955,6 +1136,26 @@ export default function DashboardPage() {
                   <i className={remainingBalance < 0 ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-chart-line"}></i>
                 </div>
               </div>
+            </div>
+
+            {/* AI Insights Summary Bar */}
+            <div className="glass-panel" style={{ ...styles.sectionPanel, padding: '16px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderLeft: '4px solid var(--brand-primary)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <i className="fa-solid fa-brain" style={{ fontSize: '22px', color: 'var(--brand-primary)' }}></i>
+                <div>
+                  <h4 style={{ fontSize: '14px', fontWeight: 700, margin: 0 }}>🧠 Latest AI Insight</h4>
+                  <p style={{ fontSize: '12px', color: 'var(--text-slate)', margin: '2px 0 0 0' }}>
+                    Reduce variable food expenses (currently {formatVal(expenses.filter(e => e.category === 'Food').reduce((sum, e) => sum + e.amount, 0))}) to optimize your capital runway.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setActiveTab('insights')} 
+                className="btn-ui btn-outline" 
+                style={{ padding: '6px 12px', fontSize: '12px' }}
+              >
+                View Hub
+              </button>
             </div>
 
             {/* Dual-Column Split Panel */}
@@ -1403,7 +1604,14 @@ export default function DashboardPage() {
                           return (
                             <tr key={inv.id} style={styles.tableRow}>
                               <td style={styles.tableCell}>
-                                <div style={styles.vendorName}>{inv.clientName}</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <div style={styles.vendorName}>{inv.clientName}</div>
+                                  {inv.status === 'Paid' && (
+                                    <span style={{ fontSize: '10px', background: '#d1fae5', color: 'var(--success)', padding: '2px 6px', borderRadius: '4px', fontWeight: 700 }}>
+                                      BILL
+                                    </span>
+                                  )}
+                                </div>
                                 <div style={styles.dateCell}>{inv.clientEmail}</div>
                               </td>
                               <td style={{ ...styles.tableCell, fontWeight: 700 }}>
@@ -1420,6 +1628,22 @@ export default function DashboardPage() {
                                 )}
                               </td>
                               <td style={{ ...styles.tableCell, textAlign: 'right' }}>
+                                {inv.status === 'Paid' && (
+                                  <button 
+                                    onClick={() => handleDownloadInvoice(inv)} 
+                                    className="btn-ui btn-outline"
+                                    style={{ 
+                                      padding: '6px 10px', 
+                                      fontSize: '11px', 
+                                      borderColor: 'var(--brand-primary)',
+                                      color: 'var(--brand-primary)',
+                                      marginRight: '8px'
+                                    }}
+                                    title="Download Settled Bill"
+                                  >
+                                    <i className="fa-solid fa-download"></i> Download Bill
+                                  </button>
+                                )}
                                 <button 
                                   onClick={() => toggleInvoicePaid(inv.id)} 
                                   className="btn-ui"
@@ -1651,6 +1875,147 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Render AI Insights Tab */}
+        {activeTab === 'insights' && (() => {
+          const monthlyTotals = {}
+          let foodTotal = 0
+          let entTotal = 0
+          
+          expenses.forEach(exp => {
+            const amt = exp.amount || 0
+            const cat = exp.category || 'Other'
+            if (cat === 'Food') foodTotal += amt
+            if (cat === 'Entertainment') entTotal += amt
+            
+            const dateStr = exp.date || ''
+            if (dateStr.length >= 7) {
+              const yearMonth = dateStr.substring(0, 7)
+              monthlyTotals[yearMonth] = (monthlyTotals[yearMonth] || 0) + amt
+            }
+          })
+
+          const months = Object.keys(monthlyTotals)
+          const avgSpent = months.length > 0 
+            ? Object.values(monthlyTotals).reduce((a, b) => a + b, 0) / months.length 
+            : (totalSpent || 5000)
+
+          const suggested = Math.max(5000, Math.round((avgSpent * 1.15) / 1000) * 1000)
+          const predicted = avgSpent * 1.03
+
+          return (
+            <div>
+              <div style={styles.dashboardHeader}>
+                <div>
+                  <h2 style={styles.welcomeGreeting}>🧠 Real-Time AI Financial Insights</h2>
+                  <p style={styles.headerSubtitle}>Leverage predictive modeling and historical spending patterns to automate budgeting and optimize capital allocations.</p>
+                </div>
+              </div>
+
+              {/* Insights Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '24px', marginBottom: '24px' }}>
+                
+                {/* Prediction Card */}
+                <div className="glass-panel" style={{ ...styles.sectionPanel, padding: '24px', margin: 0 }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <i className="fa-solid fa-chart-line" style={{ color: 'var(--brand-primary)' }}></i>
+                    AI Spending Prediction
+                  </h3>
+                  <p style={{ fontSize: '13px', color: 'var(--text-slate)', marginBottom: '12px', lineHeight: '1.5' }}>
+                    Based on your historical spending across active categories, the predictive model projects next month's total outgoing cash flow to grow by 3% due to variable seasonal costs:
+                  </p>
+                  <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Projected Spending Next Month</div>
+                    <div style={{ fontSize: '28px', fontWeight: 800, margin: '4px 0', color: 'var(--brand-primary)' }}>{formatVal(predicted)}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-slate)' }}>Historical Monthly Average: {formatVal(avgSpent)}</div>
+                  </div>
+                </div>
+
+                {/* Recommendation Card */}
+                <div className="glass-panel" style={{ ...styles.sectionPanel, padding: '24px', margin: 0 }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <i className="fa-solid fa-wand-magic-sparkles" style={{ color: 'var(--success)' }}></i>
+                    ⭐ AI Budget Recommendation
+                  </h3>
+                  <p style={{ fontSize: '13px', color: 'var(--text-slate)', marginBottom: '12px', lineHeight: '1.5' }}>
+                    FinTrack Pro automatically analyzes your historical ledger variance to suggest an optimized Monthly Capital Allocation with a 15% safety buffer:
+                  </p>
+                  <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Recommended Budget Allocation</div>
+                      <div style={{ fontSize: '24px', fontWeight: 800, margin: '4px 0', color: 'var(--success)' }}>{formatVal(suggested)}</div>
+                    </div>
+                    <button 
+                      onClick={async () => {
+                        try {
+                          const response = await fetch('/api/users/budget', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ monthlyBudget: suggested })
+                          })
+                          if (!response.ok) throw new Error('Failed to apply budget suggestion')
+                          const data = await response.json()
+                          setUser(data)
+                          setSettingsBudget((suggested * currencies[currencyCode].rate).toFixed(2))
+                          alert(`✨ Monthly allocation successfully updated to ${formatVal(suggested)} in database!`)
+                        } catch (err) {
+                          alert(`Error: ${err.message}`)
+                        }
+                      }}
+                      className="btn-ui btn-solid"
+                      style={{ padding: '8px 16px', fontSize: '12.5px', background: 'var(--success)' }}
+                    >
+                      Apply Suggested
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-slate)' }}>Current Budget: {formatVal(monthlyBudget)}</div>
+                </div>
+              </div>
+
+              {/* AI Insights List */}
+              <div className="glass-panel" style={{ ...styles.sectionPanel, padding: '24px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <i className="fa-solid fa-lightbulb" style={{ color: 'var(--warning)' }}></i>
+                  AI Real-Time Insights Feed
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  
+                  <div style={{ display: 'flex', gap: '12px', padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '24px' }}>📈</div>
+                    <div>
+                      <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 4px 0' }}>Variable Spending Analysis</h4>
+                      <p style={{ fontSize: '13px', color: 'var(--text-slate)', margin: 0 }}>
+                        Food spending is currently at <strong>{formatVal(foodTotal)}</strong>. Shifting variable dining-out expenses can reduce next month's projection by 8%.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px', padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '24px' }}>📅</div>
+                    <div>
+                      <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 4px 0' }}>Subscription Renews Warning</h4>
+                      <p style={{ fontSize: '13px', color: 'var(--text-slate)', margin: 0 }}>
+                        Active renewals total <strong>{formatVal(totalSubscriptions)}</strong>. Keep an eye on entertainment subscriptions scheduled to auto-renew soon to avoid unexpected debits.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px', padding: '16px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '24px' }}>💡</div>
+                    <div>
+                      <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 4px 0' }}>Capital Preservation Suggestion</h4>
+                      <p style={{ fontSize: '13px', color: 'var(--text-slate)', margin: 0 }}>
+                        Reduce entertainment spending by <strong>{formatVal(1500)}</strong> this cycle to preserve liquid cash reserves and stay comfortably within your capital budget.
+                      </p>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+          )
+        })()}
 
         {activeTab === 'settings' && (
           <div>
@@ -2114,6 +2479,91 @@ export default function DashboardPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Render AI Assistant Tab */}
+        {activeTab === 'assistant' && (
+          <div>
+            <div style={styles.dashboardHeader}>
+              <div>
+                <h2 style={styles.welcomeGreeting}>Interactive AI Assistant</h2>
+                <p style={styles.headerSubtitle}>Talk or chat with the AI to query metrics or automatically record transactions in MySQL.</p>
+              </div>
+            </div>
+
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+              <div className="glass-panel" style={{ ...styles.sectionPanel, padding: '24px', display: 'flex', flexDirection: 'column', height: '550px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid var(--border)', paddingBottom: '16px', marginBottom: '16px' }}>
+                  <span className="pulse-status" style={{ background: 'var(--success)' }}></span>
+                  <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, color: 'var(--text-slate)' }}>FinTrack AI Assistant Active</h3>
+                </div>
+
+                {/* Messages Box */}
+                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '8px', marginBottom: '20px' }}>
+                  {chatMessages.map((msg, idx) => (
+                    <div 
+                      key={idx} 
+                      style={{ 
+                        alignSelf: msg.sender === 'user' ? 'flex-end' : 'flex-start',
+                        backgroundColor: msg.sender === 'user' ? 'var(--brand-primary)' : 'rgba(255, 255, 255, 0.03)',
+                        color: msg.sender === 'user' ? 'white' : 'var(--text-slate)',
+                        padding: '12px 16px',
+                        borderRadius: msg.sender === 'user' ? '18px 18px 2px 18px' : '18px 18px 18px 2px',
+                        maxWidth: '75%',
+                        fontSize: '14px',
+                        lineHeight: '1.5',
+                        boxShadow: 'var(--shadow-sm)',
+                        border: msg.sender === 'user' ? 'none' : '1px solid var(--border)'
+                      }}
+                    >
+                      {msg.text}
+                    </div>
+                  ))}
+                  {chatLoading && (
+                    <div style={{ alignSelf: 'flex-start', backgroundColor: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-slate)', padding: '12px 16px', borderRadius: '18px 18px 18px 2px', display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid var(--border)' }}>
+                      <i className="fa-solid fa-spinner fa-spin"></i>
+                      <span>Thinking...</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Input Panel */}
+                <form onSubmit={handleSendChatMessage} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <input 
+                    type="text" 
+                    className="input-control" 
+                    placeholder="Type transaction details (e.g. 'Spent 1500 INR on Uber today')..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    disabled={chatLoading}
+                    style={{ flex: 1, margin: 0 }}
+                  />
+
+                  {/* Mic Button */}
+                  <button 
+                    type="button" 
+                    onClick={startVoiceRecognition}
+                    className={`btn-ui ${isRecording ? 'btn-danger' : 'btn-outline'}`}
+                    style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title="Speak message"
+                  >
+                    <i className={isRecording ? "fa-solid fa-microphone-lines pulse" : "fa-solid fa-microphone"}></i>
+                  </button>
+
+                  {/* Send Button */}
+                  <button 
+                    type="submit" 
+                    className="btn-ui btn-solid" 
+                    disabled={chatLoading || !chatInput.trim()}
+                    style={{ padding: '12px 24px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <i className="fa-solid fa-paper-plane"></i>
+                    <span>Send</span>
+                  </button>
+                </form>
+              </div>
+            </div>
           </div>
         )}
 

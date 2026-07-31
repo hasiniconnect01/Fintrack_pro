@@ -43,6 +43,24 @@ public class OcrService {
         return parseText(rawText);
     }
 
+    public ReceiptResponse processReceipt(java.io.InputStream inputStream) throws IOException, TesseractException {
+        if (tessdataPath == null || tessdataPath.isBlank() || !Files.isDirectory(Path.of(tessdataPath))) {
+            throw new IllegalStateException("Tesseract language data is unavailable. Configure TESSDATA_PATH.");
+        }
+        Tesseract tesseract = new Tesseract();
+
+        tesseract.setDatapath(tessdataPath);
+        tesseract.setLanguage("eng");
+
+        BufferedImage image = ImageIO.read(inputStream);
+        if (image == null) {
+            throw new IOException("Invalid image stream.");
+        }
+
+        String rawText = tesseract.doOCR(image);
+        return parseText(rawText);
+    }
+
     private ReceiptResponse parseText(String text) {
         String lowerText = text.toLowerCase();
         String merchant = findMerchant(text);
