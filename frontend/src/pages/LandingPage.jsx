@@ -83,10 +83,10 @@ export default function LandingPage() {
   return (
     <div style={styles.container}>
       {/* Navigation Header */}
-      <header style={styles.navbar}>
+      <header style={styles.navbar} className="glass-panel">
         <div style={styles.logo}>
           <i className="fa-solid fa-money-bill-trend-up" style={styles.logoIcon}></i>
-          <span>FinTrack Enterprise</span>
+          <span className="gradient-heading" style={{ fontWeight: 800 }}>FinTrack Enterprise</span>
         </div>
         <nav style={styles.nav}>
           <a href="#about" style={styles.navLink}>About Platform</a>
@@ -110,19 +110,19 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Section */}
-      <section style={styles.heroSection} id="about">
+      <section style={styles.heroSection} id="about" className="animate-fade-in-up">
         <div style={styles.heroContent}>
-          <span style={styles.heroTag}>
+          <span style={styles.heroTag} className="animate-fade-in-up">
             <i className="fa-solid fa-sparkles" style={{ marginRight: '6px' }}></i> 
             Now Driven by Deep OCR AI Layout Engines
           </span>
-          <h1 style={styles.heroTitle}>
-            Automate Your Corporate <span style={styles.heroTitleSpan}>Wealth Ledger</span> Instantly.
+          <h1 style={styles.heroTitle} className="gradient-heading">
+            Automate Your Corporate <span className="gradient-accent">Wealth Ledger</span> Instantly.
           </h1>
           <p style={styles.heroDesc}>
             Ditch manual data input variables. Take control of your daily financial logs, track remaining liquidity balance targets, and monitor budget metrics in real-time through intelligent file analysis grids.
           </p>
-          <div style={{ display: 'flex', gap: '16px' }}>
+          <div style={{ display: 'flex', gap: '16px' }} className="animate-fade-in-up">
             <button className="btn-ui btn-solid" style={styles.heroBtnMain} onClick={() => openModal('register')}>
               Get Started Free <i className="fa-solid fa-arrow-right" style={{ marginLeft: '6px' }}></i>
             </button>
@@ -133,8 +133,8 @@ export default function LandingPage() {
         </div>
 
         {/* Interactive Hero Visual Tab Widget */}
-        <div style={styles.heroVisual}>
-          <div style={styles.heroWidgetContainer}>
+        <div style={styles.heroVisual} className="animate-fade-in-up">
+          <div style={styles.heroWidgetContainer} className="glass-panel">
             <div style={styles.widgetTabBar}>
               <button 
                 onClick={() => setWidgetTab('calculator')}
@@ -162,7 +162,7 @@ export default function LandingPage() {
 
             {/* Tab Contents */}
             {widgetTab === 'calculator' ? (
-              <div style={styles.calculatorWidget}>
+              <div style={styles.calculatorWidget} className="animate-fade-in-up">
                 <h3 style={styles.widgetTitle}>Interactive Budget Simulator</h3>
                 <p style={styles.widgetDesc}>Slide the gauge to see recommended asset allocations dynamically.</p>
                 
@@ -211,15 +211,15 @@ export default function LandingPage() {
                 </div>
               </div>
             ) : (
-              <div style={styles.securityWidget}>
+              <div style={styles.securityWidget} className="animate-fade-in-up">
                 <i className="fa-solid fa-shield-halved" style={styles.mockupIcon}></i>
                 <h3 style={styles.mockupTitle}>Institutional Security</h3>
                 <p style={styles.mockupDesc}>
                   Your tracking assets are encrypted. Features include automated real-time transaction blocking guardrails alongside client account mapping rulesets built into the platform architecture stack.
                 </p>
                 <div style={styles.securityBadges}>
-                  <span><i className="fa-solid fa-lock"></i> SSL Encrypted</span>
-                  <span><i className="fa-solid fa-database"></i> MySQL Core</span>
+                  <span className="tag tag-rent"><i className="fa-solid fa-lock" style={{ marginRight: '6px' }}></i> SSL Encrypted</span>
+                  <span className="tag tag-other"><i className="fa-solid fa-database" style={{ marginRight: '6px' }}></i> MySQL Core</span>
                 </div>
               </div>
             )}
@@ -230,30 +230,30 @@ export default function LandingPage() {
       {/* Global Risk Metrics Stats Panel */}
       <section style={styles.statsSection} id="stats">
         <div style={styles.statsGrid}>
-          <div style={styles.statCard}>
-            <h3>$4.8B+</h3>
-            <p>Ledger Capital Safeguarded</p>
+          <div className="stat-card glass-panel card-interactive animate-fade-in-up">
+            <h3 className="gradient-heading" style={{ fontSize: '32px', fontWeight: '800' }}>$4.8B+</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Ledger Capital Safeguarded</p>
           </div>
-          <div style={styles.statCard}>
-            <h3>924k+</h3>
-            <p>Receipt Audits Executed</p>
+          <div className="stat-card stat-card-success glass-panel card-interactive animate-fade-in-up">
+            <h3 className="gradient-accent" style={{ fontSize: '32px', fontWeight: '800' }}>924k+</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Receipt Audits Executed</p>
           </div>
-          <div style={styles.statCard}>
-            <h3>1.2M</h3>
-            <p>Impulse Transactions Blocked</p>
+          <div className="stat-card stat-card-danger glass-panel card-interactive animate-fade-in-up">
+            <h3 style={{ fontSize: '32px', fontWeight: '800', color: 'var(--danger)' }}>1.2M</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Impulse Transactions Blocked</p>
           </div>
-          <div style={styles.statCard}>
-            <h3>99.99%</h3>
-            <p>Uptime Risk Containment</p>
+          <div className="stat-card stat-card-warning glass-panel card-interactive animate-fade-in-up">
+            <h3 style={{ fontSize: '32px', fontWeight: '800', color: 'var(--warning)' }}>99.99%</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Uptime Risk Containment</p>
           </div>
         </div>
       </section>
 
       {/* Core Capabilities Grid */}
       <section style={styles.featuresSection} id="features">
-        <h2 style={styles.featuresHeading}>Engineered for High-Density Financial Audits</h2>
+        <h2 style={styles.featuresHeading} className="gradient-heading">Engineered for High-Density Financial Audits</h2>
         <div style={styles.featuresGrid}>
-          <div style={styles.featureCard}>
+          <div className="feature-card glass-panel card-interactive">
             <div style={styles.featureIconBox}>
               <i className="fa-solid fa-expand"></i>
             </div>
@@ -262,7 +262,7 @@ export default function LandingPage() {
               Upload raw receipt document photos. Our structural OCR regex engine isolates merchant titles and final item prices automatically.
             </p>
           </div>
-          <div style={styles.featureCard}>
+          <div className="feature-card glass-panel card-interactive">
             <div style={styles.featureIconBox}>
               <i className="fa-solid fa-bolt"></i>
             </div>
@@ -271,7 +271,7 @@ export default function LandingPage() {
               Our backend logic layer monitors entries in real-time. Transactions over $100 flag instant budget boundary errors.
             </p>
           </div>
-          <div style={styles.featureCard}>
+          <div className="feature-card glass-panel card-interactive">
             <div style={styles.featureIconBox}>
               <i className="fa-solid fa-chart-line"></i>
             </div>
@@ -285,13 +285,13 @@ export default function LandingPage() {
 
       {/* Authentication Modal */}
       <div className={`modal-overlay ${isModalOpen ? 'active' : ''}`} onClick={closeModal}>
-        <div className="modal-window" onClick={(e) => e.stopPropagation()} style={styles.modalWindowOverride}>
+        <div className="modal-window glass-panel animate-slide-down" onClick={(e) => e.stopPropagation()} style={styles.modalWindowOverride}>
           <button className="close-modal-btn" onClick={closeModal}>
             <i className="fa-solid fa-xmark"></i>
           </button>
           
           <div style={styles.modalHeader}>
-            <h3 style={styles.modalTitle}>
+            <h3 style={styles.modalTitle} className="gradient-heading">
               {modalMode === 'login' ? 'Access Enterprise Portal' : 'Initialize New Ledger'}
             </h3>
             <p style={styles.modalSubtitle}>

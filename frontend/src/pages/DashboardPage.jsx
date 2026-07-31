@@ -570,7 +570,9 @@ export default function DashboardPage() {
       return
     }
 
-    const amountToTransfer = parseFloat(transferAmount)
+    const amountToTransferSelected = parseFloat(transferAmount)
+    const currentRate = currencies[currencyCode].rate
+    const baseAmountToTransfer = amountToTransferSelected / currentRate
     const sourceBalance = walletBalances[transferSource]
 
     if (transferSource === transferTarget) {
@@ -579,7 +581,7 @@ export default function DashboardPage() {
       return
     }
 
-    if (sourceBalance < amountToTransfer) {
+    if (sourceBalance < baseAmountToTransfer) {
       setWalletError('Insufficient funds in source wallet.')
       setWalletSuccess('')
       return
@@ -588,8 +590,8 @@ export default function DashboardPage() {
     setWalletError('')
     const updatedBalances = {
       ...walletBalances,
-      [transferSource]: sourceBalance - amountToTransfer,
-      [transferTarget]: walletBalances[transferTarget] + amountToTransfer
+      [transferSource]: sourceBalance - baseAmountToTransfer,
+      [transferTarget]: walletBalances[transferTarget] + baseAmountToTransfer
     }
 
     setWalletBalances(updatedBalances)
@@ -599,7 +601,7 @@ export default function DashboardPage() {
       id: 'TX-' + Math.floor(Math.random() * 90000 + 10000),
       source: transferSource,
       target: transferTarget,
-      amount: amountToTransfer,
+      amount: baseAmountToTransfer,
       timestamp: new Date().toLocaleTimeString() + ' ' + new Date().toLocaleDateString()
     }
 
@@ -608,7 +610,7 @@ export default function DashboardPage() {
     localStorage.setItem(`fintrack_transfer_logs_${user.email}`, JSON.stringify(updatedLogs))
 
     setTransferAmount('')
-    setWalletSuccess(`Transferred ${formatVal(amountToTransfer)} successfully!`)
+    setWalletSuccess(`Transferred ${formatVal(baseAmountToTransfer)} successfully!`)
   }
 
   // Settings Budget Syncing
@@ -905,47 +907,50 @@ export default function DashboardPage() {
 
             {/* Metrics Overview Cards */}
             <div style={styles.metricsGrid}>
-              <div className="metric-card" style={styles.metricCard}>
+              <div className="stat-card glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px' }}>
                 <div style={styles.metricInfo}>
-                  <h4>Monthly Capital Allocation</h4>
-                  <p>{formatVal(monthlyBudget)}</p>
+                  <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Monthly Capital Allocation</h4>
+                  <p style={{ fontSize: '24px', fontWeight: '800' }} className="gradient-heading">{formatVal(monthlyBudget)}</p>
                 </div>
-                <div style={{ ...styles.metricIcon, background: '#e0e7ff', color: 'var(--brand-primary)' }}>
+                <div style={{ ...styles.metricIcon, background: 'rgba(99, 102, 241, 0.12)', color: 'var(--brand-primary)', position: 'absolute', right: '20px', top: '20px' }}>
                   <i className="fa-solid fa-vault"></i>
                 </div>
               </div>
 
-              <div className="metric-card" style={styles.metricCard}>
+              <div className="stat-card glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px' }}>
                 <div style={styles.metricInfo}>
-                  <h4>Aggregate Spending Sum</h4>
-                  <p>{formatVal(totalSpent)}</p>
+                  <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Aggregate Spending Sum</h4>
+                  <p style={{ fontSize: '24px', fontWeight: '800', color: '#db2777' }}>{formatVal(totalSpent)}</p>
                 </div>
-                <div style={{ ...styles.metricIcon, background: '#fdf2f8', color: '#db2777' }}>
+                <div style={{ ...styles.metricIcon, background: 'rgba(219, 39, 119, 0.12)', color: '#db2777', position: 'absolute', right: '20px', top: '20px' }}>
                   <i className="fa-solid fa-credit-card"></i>
                 </div>
               </div>
 
-              <div className="metric-card" style={{ ...styles.metricCard, borderLeft: '4px solid #db2777' }}>
+              <div className="stat-card stat-card-danger glass-panel card-interactive animate-fade-in-up" style={{ ...styles.metricCard, padding: '24px' }}>
                 <div style={styles.metricInfo}>
-                  <h4>Active Renewals</h4>
-                  <p style={{ color: '#db2777' }}>{formatVal(totalSubscriptions)}</p>
+                  <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Active Renewals</h4>
+                  <p style={{ fontSize: '24px', fontWeight: '800', color: '#db2777' }}>{formatVal(totalSubscriptions)}</p>
                 </div>
-                <div style={{ ...styles.metricIcon, background: '#fff1f2', color: '#f43f5e' }}>
+                <div style={{ ...styles.metricIcon, background: 'rgba(244, 63, 94, 0.12)', color: '#f43f5e', position: 'absolute', right: '20px', top: '20px' }}>
                   <i className="fa-solid fa-arrows-spin"></i>
                 </div>
               </div>
 
-              <div className="metric-card" style={{ ...styles.metricCard, borderLeft: remainingBalance < 0 ? '4px solid var(--danger)' : '1px solid var(--border)' }}>
+              <div className={`stat-card ${remainingBalance < 0 ? 'stat-card-danger' : 'stat-card-success'} glass-panel card-interactive animate-fade-in-up`} style={{ ...styles.metricCard, padding: '24px' }}>
                 <div style={styles.metricInfo}>
-                  <h4>Liquid Running Balance</h4>
-                  <p style={{ color: remainingBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
+                  <h4 style={{ fontSize: '13px', color: 'var(--text-slate)', fontWeight: 600 }}>Liquid Running Balance</h4>
+                  <p style={{ fontSize: '24px', fontWeight: '800', color: remainingBalance < 0 ? 'var(--danger)' : 'var(--success)' }}>
                     {formatVal(remainingBalance)}
                   </p>
                 </div>
                 <div style={{ 
                   ...styles.metricIcon, 
-                  background: remainingBalance < 0 ? '#fee2e2' : '#d1fae5', 
-                  color: remainingBalance < 0 ? 'var(--danger)' : 'var(--success)' 
+                  background: remainingBalance < 0 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)', 
+                  color: remainingBalance < 0 ? 'var(--danger)' : 'var(--success)',
+                  position: 'absolute',
+                  right: '20px',
+                  top: '20px'
                 }}>
                   <i className={remainingBalance < 0 ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-chart-line"}></i>
                 </div>
@@ -955,7 +960,7 @@ export default function DashboardPage() {
             {/* Dual-Column Split Panel */}
             <div style={styles.dashboardSplit}>
               {/* AI OCR Receipt Scanner */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-camera" style={{ color: 'var(--success)' }}></i> 
                   AI Receipt Capture
@@ -996,7 +1001,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Register New Transaction Form */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-file-invoice" style={{ color: 'var(--brand-primary)' }}></i>
                   Register New Transaction
@@ -1083,7 +1088,7 @@ export default function DashboardPage() {
             {/* Spending Insights Chart & Ledger Table Layout */}
             <div style={styles.dashboardSplit}>
               {/* Spend Category Visualization */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-chart-pie" style={{ color: 'var(--brand-primary)' }}></i>
                   Spending Allocation Breakdown
@@ -1154,7 +1159,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Search, Filter, and Master Ledger Table */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-list-check" style={{ color: 'var(--brand-primary)' }}></i>
                   Master Financial Ledger Registry
@@ -1304,7 +1309,7 @@ export default function DashboardPage() {
             {/* Split Invoicing Section */}
             <div style={styles.dashboardSplit}>
               {/* Issue New Invoice Form */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-file-signature" style={{ color: 'var(--brand-primary)' }}></i>
                   Issue New Invoice
@@ -1371,7 +1376,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Invoice History Ledger */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-history" style={{ color: 'var(--brand-primary)' }}></i>
                   Active Smart Invoice History Ledger
@@ -1527,7 +1532,7 @@ export default function DashboardPage() {
             {/* Split Transfers Section */}
             <div style={styles.dashboardSplit}>
               {/* Process Transfer Form */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-exchange-alt" style={{ color: 'var(--brand-primary)' }}></i>
                   Process Capital Transfer
@@ -1596,7 +1601,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Wallet Audit Log */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-history" style={{ color: 'var(--brand-primary)' }}></i>
                   Wallet Audit Trail Ledger
@@ -1658,7 +1663,7 @@ export default function DashboardPage() {
 
             <div style={styles.dashboardSplit}>
               {/* Left Column: Budget Updates */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-vault" style={{ color: 'var(--brand-primary)' }}></i>
                   Update Monthly Budget
@@ -1700,7 +1705,7 @@ export default function DashboardPage() {
               </div>
 
               {/* Right Column: Currency Settings */}
-              <div style={styles.sectionPanel}>
+              <div style={styles.sectionPanel} className="glass-panel">
                 <h3 style={styles.panelTitle}>
                   <i className="fa-solid fa-globe" style={{ color: 'var(--brand-primary)' }}></i>
                   Display Currency Configuration
