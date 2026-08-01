@@ -22,80 +22,126 @@ public class ChatbotController {
     private UserRepository userRepository;
 
     @PostMapping("/message")
-    public ResponseEntity<?> handleMessage(@RequestBody Map<String, String> payload, Authentication authentication) {
+    public ResponseEntity<?> handleMessage(@RequestBody Map<String, Object> payload, Authentication authentication) {
         user currentUser = userRepository.findByEmail(authentication.getName())
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(HttpStatus.UNAUTHORIZED));
 
-        String message = payload.get("message");
+        String message = (String) payload.get("message");
         if (message == null || message.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("response", "Please say or type something."));
         }
 
         String lowerMessage = message.toLowerCase();
 
-        // 1. Extract Amount
-        double amount = 0.0;
-        // Regex looks for numbers, optionally prefixed/suffixed with currency signs/letters
-        Pattern amountPattern = Pattern.compile("(?:\\b|\\$|₹|€|£|usd|inr|eur|gbp)\\s*([0-9]+(?:\\.[0-9]{2})?)\\b", Pattern.CASE_INSENSITIVE);
-        Matcher amountMatcher = amountPattern.matcher(lowerMessage);
-        
-        while (amountMatcher.find()) {
+        // Check if there is a pending transaction from conversational state
+        Double pendingAmount = null;
+        if (payload.get("pendingAmount") != null) {
             try {
-                double val = Double.parseDouble(amountMatcher.group(1));
-                if (val > 0.0) {
-                    amount = val;
-                    break;
-                }
+                pendingAmount = Double.parseDouble(payload.get("pendingAmount").toString());
             } catch (NumberFormatException ignored) {}
         }
+        String pendingCurrency = (String) payload.get("pendingCurrency");
+        String pendingDateStr = (String) payload.get("pendingDate");
 
-        // 2. Extract Merchant
+        double amount = 0.0;
         String merchant = null;
-        String[] knownMerchants = {"uber", "netflix", "starbucks", "amazon", "apple", "google", "spotify", "steam", "mcdonald", "whole foods", "eat club", "eatclub"};
-        for (String m : knownMerchants) {
-            if (lowerMessage.contains(m)) {
-                merchant = m.equals("eatclub") ? "Eat Club" : m.substring(0, 1).toUpperCase() + m.substring(1);
-                if (m.equals("whole foods")) merchant = "Whole Foods";
-                if (m.equals("mcdonald")) merchant = "McDonald's";
-                break;
-            }
-        }
+        LocalDate date = LocalDate.now();
 
-        // Fallback: search for words after "spent on", "paid to", "bought", etc.
-        if (merchant == null) {
-            Pattern spentOnPattern = Pattern.compile("(?:spent on|paid to|bought|bought a|for|at|to)\\s+([a-zA-Z0-9\\s]{3,15})\\b", Pattern.CASE_INSENSITIVE);
-            Matcher spentMatcher = spentOnPattern.matcher(lowerMessage);
-            if (spentMatcher.find()) {
-                String potential = spentMatcher.group(1).trim();
-                // Avoid capturing numbers or dates
-                if (!potential.matches(".*(?:today|yesterday|tomorrow|[0-9]).*")) {
-                    merchant = potential.substring(0, 1).toUpperCase() + potential.substring(1);
+        if (pendingAmount != null && pendingAmount > 0.0) {
+            // Conversational response: the user message is the merchant!
+            merchant = message.trim();
+            if (merchant.length() > 0) {
+                merchant = merchant.substring(0, 1).toUpperCase() + merchant.substring(1);
+            }
+            amount = pendingAmount;
+            if (pendingDateStr != null) {
+                try {
+                    date = LocalDate.parse(pendingDateStr);
+                } catch (Exception ignored) {}
+            }
+        } else {
+            // 1. Extract Amount
+            Pattern amountPattern = Pattern.compile("(?:\\b|\\$|₹|€|£|usd|inr|eur|gbp)\\s*([0-9]+(?:\\.[0-9]{2})?)\\b", Pattern.CASE_INSENSITIVE);
+            Matcher amountMatcher = amountPattern.matcher(lowerMessage);
+            
+            while (amountMatcher.find()) {
+                try {
+                    double val = Double.parseDouble(amountMatcher.group(1));
+                    if (val > 0.0) {
+                        amount = val;
+                        break;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+
+            // 2. Extract Merchant
+            String[] knownMerchants = {"uber", "netflix", "starbucks", "amazon", "apple", "google", "spotify", "steam", "mcdonald", "whole foods", "eat club", "eatclub"};
+            for (String m : knownMerchants) {
+                if (lowerMessage.contains(m)) {
+                    merchant = m.equals("eatclub") ? "Eat Club" : m.substring(0, 1).toUpperCase() + m.substring(1);
+                    if (m.equals("whole foods")) merchant = "Whole Foods";
+                    if (m.equals("mcdonald")) merchant = "McDonald's";
+                    break;
                 }
             }
+
+            // Fallback: search for words after "spent on", "paid to", "bought", etc.
+            if (merchant == null) {
+                Pattern spentOnPattern = Pattern.compile("(?:spent on|paid to|bought|bought a|for|at|to)\\s+([a-zA-Z0-9\\s]{3,15})\\b", Pattern.CASE_INSENSITIVE);
+                Matcher spentMatcher = spentOnPattern.matcher(lowerMessage);
+                if (spentMatcher.find()) {
+                    String potential = spentMatcher.group(1).trim();
+                    if (!potential.matches(".*(?:today|yesterday|tomorrow|[0-9]).*")) {
+                        merchant = potential.substring(0, 1).toUpperCase() + potential.substring(1);
+                    }
+                }
+            }
+
+            // 3. Extract Date
+            if (lowerMessage.contains("yesterday")) {
+                date = date.minusDays(1);
+            } else if (lowerMessage.contains("day before yesterday")) {
+                date = date.minusDays(2);
+            } else if (lowerMessage.contains("last week")) {
+                date = date.minusWeeks(1);
+            }
         }
 
-        // 3. Extract Date
-        LocalDate date = LocalDate.now();
-        if (lowerMessage.contains("yesterday")) {
-            date = date.minusDays(1);
-        } else if (lowerMessage.contains("day before yesterday")) {
-            date = date.minusDays(2);
-        } else if (lowerMessage.contains("last week")) {
-            date = date.minusWeeks(1);
-        }
-
-        // 4. If we got amount and merchant, record it!
-        if (amount > 0.0 && merchant != null && !merchant.isBlank()) {
-            // Convert to base USD for database consistency
-            double rate = 1.0;
+        // If we got amount but NO merchant, prompt the user and save pending state
+        if (amount > 0.0 && (merchant == null || merchant.isBlank())) {
             String currencySymbol = "$";
             if (lowerMessage.contains("inr") || lowerMessage.contains("₹") || lowerMessage.contains("rupee")) {
-                rate = 83.5;
                 currencySymbol = "₹";
             } else if (lowerMessage.contains("eur") || lowerMessage.contains("€") || lowerMessage.contains("euro")) {
-                rate = 0.92;
                 currencySymbol = "€";
             } else if (lowerMessage.contains("gbp") || lowerMessage.contains("£") || lowerMessage.contains("pound")) {
+                currencySymbol = "£";
+            }
+
+            return ResponseEntity.ok(Map.of(
+                "response", "I got the amount **" + currencySymbol + String.format("%.2f", amount) + "**, but which merchant or store was this for?",
+                "recorded", false,
+                "pendingTransaction", Map.of(
+                    "amount", amount,
+                    "currencySymbol", currencySymbol,
+                    "date", date.toString()
+                )
+            ));
+        }
+
+        // 4. Record transaction if complete
+        if (amount > 0.0 && merchant != null && !merchant.isBlank()) {
+            double rate = 1.0;
+            String currencySymbol = "$";
+            
+            String checkText = (pendingCurrency != null) ? pendingCurrency.toLowerCase() : lowerMessage;
+            if (checkText.contains("inr") || checkText.contains("₹") || checkText.contains("rupee")) {
+                rate = 83.5;
+                currencySymbol = "₹";
+            } else if (checkText.contains("eur") || checkText.contains("€") || checkText.contains("euro")) {
+                rate = 0.92;
+                currencySymbol = "€";
+            } else if (checkText.contains("gbp") || checkText.contains("£") || checkText.contains("pound")) {
                 rate = 0.79;
                 currencySymbol = "£";
             }
@@ -107,7 +153,6 @@ public class ChatbotController {
             expense.setAmount(baseAmount);
             expense.setDate(date);
 
-            // Categorization
             String category = "Other";
             String merchantLower = merchant.toLowerCase();
             if (merchantLower.contains("uber") || merchantLower.contains("taxi") || merchantLower.contains("ride")) {

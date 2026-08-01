@@ -88,13 +88,15 @@ export default function DashboardPage() {
   const [settingsSuccess, setSettingsSuccess] = useState('')
   const [settingsError, setSettingsError] = useState('')
 
-  // Chatbot State
   const [chatMessages, setChatMessages] = useState([
     { sender: 'bot', text: '👋 Hello! I am your FinTrack Pro AI Assistant. Speak or type your transaction details (e.g. "I spent 1500 INR on Starbucks today") and I will record it instantly!' }
   ])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const speechTimeoutRef = useRef(null)
+  const recognitionRef = useRef(null)
+  const [pendingTransaction, setPendingTransaction] = useState(null)
 
   // UI State
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
@@ -713,16 +715,29 @@ Thank you for your business!
     setChatLoading(true)
 
     try {
+      const payload = { message: userText }
+      if (pendingTransaction) {
+        payload.pendingAmount = pendingTransaction.amount
+        payload.pendingCurrency = pendingTransaction.currencySymbol
+        payload.pendingDate = pendingTransaction.date
+      }
+
       const response = await fetch('/api/chatbot/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText })
+        body: JSON.stringify(payload)
       })
       if (!response.ok) throw new Error('API failure')
       const data = await response.json()
       
       setChatMessages(prev => [...prev, { sender: 'bot', text: data.response }])
       speakText(data.response)
+
+      if (data.pendingTransaction) {
+        setPendingTransaction(data.pendingTransaction)
+      } else {
+        setPendingTransaction(null)
+      }
 
       if (data.recorded) {
         fetchExpenses()
@@ -737,16 +752,29 @@ Thank you for your business!
   const sendSpeechMessage = async (text) => {
     setChatLoading(true)
     try {
+      const payload = { message: text }
+      if (pendingTransaction) {
+        payload.pendingAmount = pendingTransaction.amount
+        payload.pendingCurrency = pendingTransaction.currencySymbol
+        payload.pendingDate = pendingTransaction.date
+      }
+
       const response = await fetch('/api/chatbot/message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify(payload)
       })
       if (!response.ok) throw new Error('API failure')
       const data = await response.json()
       
       setChatMessages(prev => [...prev, { sender: 'bot', text: data.response }])
       speakText(data.response)
+
+      if (data.pendingTransaction) {
+        setPendingTransaction(data.pendingTransaction)
+      } else {
+        setPendingTransaction(null)
+      }
 
       if (data.recorded) {
         fetchExpenses()
@@ -759,37 +787,70 @@ Thank you for your business!
   }
 
   const startVoiceRecognition = () => {
+    if (isRecording) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      setIsRecording(false)
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current)
+      }
+      return
+    }
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
       alert("Speech recognition is not supported in this browser. Try Google Chrome or Microsoft Edge.")
       return
     }
+
     const recognition = new SpeechRecognition()
-    recognition.continuous = false
-    recognition.interimResults = false
+    recognitionRef.current = recognition
+    recognition.continuous = true
+    recognition.interimResults = true
     recognition.lang = 'en-US'
+
+    let finalTranscript = ''
 
     recognition.onstart = () => {
       setIsRecording(true)
+      setChatInput('')
     }
 
     recognition.onresult = (event) => {
-      const now = Date.now()
-      if (now - lastSpeechTimeRef.current < 3000) {
-        return
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current)
       }
-      const transcript = event.results[0][0].transcript
-      if (transcript && transcript.trim() && !chatLoading) {
-        lastSpeechTimeRef.current = now
-        recognition.stop() // Prevent duplicate triggers immediately
-        setChatMessages(prev => [...prev, { sender: 'user', text: transcript }])
-        sendSpeechMessage(transcript.trim())
+
+      let interimTranscript = ''
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' '
+        } else {
+          interimTranscript += event.results[i][0].transcript
+        }
+      }
+
+      const currentText = (finalTranscript + interimTranscript).trim()
+      setChatInput(currentText)
+
+      if (currentText.length > 0) {
+        speechTimeoutRef.current = setTimeout(() => {
+          recognition.stop()
+          setIsRecording(false)
+          setChatMessages(prev => [...prev, { sender: 'user', text: currentText }])
+          setChatInput('')
+          sendSpeechMessage(currentText)
+        }, 2200) // Wait 2.2 seconds of silence to submit
       }
     }
 
     recognition.onerror = (e) => {
       console.error(e)
       setIsRecording(false)
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current)
+      }
     }
 
     recognition.onend = () => {
