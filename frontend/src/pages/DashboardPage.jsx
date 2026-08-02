@@ -2658,6 +2658,8 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     position: 'fixed',
+    top: 0,
+    left: 0,
     height: '100vh',
     zIndex: 99,
     transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
