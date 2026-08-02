@@ -1,51 +1,40 @@
-# ==========================
-# Stage 1 - Build React Frontend
-# ==========================
+# ---------- Stage 1 : Build React ----------
 FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
-RUN npm ci
+RUN npm install
 
-COPY frontend/ ./
+COPY frontend ./
 
+# Build frontend (Vite outputs directly to src/main/resources/static)
 RUN npm run build
 
-# ==========================
-# Stage 2 - Build Spring Boot
-# ==========================
+# ---------- Stage 2 : Build Spring Boot ----------
 FROM maven:3.9-eclipse-temurin-17 AS backend-builder
 
 WORKDIR /app
 
 COPY pom.xml ./
-
 RUN mvn dependency:go-offline -B
 
 COPY src ./src
 
-COPY --from=frontend-builder /app/frontend/dist ./src/main/resources/static
-
+# Frontend has already written files into src/main/resources/static
 RUN mvn clean package -DskipTests
 
-# ==========================
-# Stage 3 - Run Application
-# ==========================
+# ---------- Stage 3 : Run ----------
 FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /app
 
-# Install OCR Engine + English Language Data
-RUN apk update && \
-    apk add --no-cache \
-    tesseract-ocr \
-    tesseract-ocr-data-eng
+# Install Tesseract OCR
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
 
-COPY --from=backend-builder /app/target/finance-tracker-0.0.1-SNAPSHOT.jar app.jar
+ENV TESSDATA_PATH=/usr/share/tessdata
 
-# Tesseract language data path
-ENV TESSDATA_PATH=/usr/share/tesseract-ocr/5/tessdata
+COPY --from=backend-builder /app/target/*.jar app.jar
 
 EXPOSE 8080
 
