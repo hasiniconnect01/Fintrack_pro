@@ -92,15 +92,21 @@ public class SecurityConfig {
                         // Render Health Check
                         .requestMatchers("/actuator/**").permitAll()
 
-                        // H2 Console (Local Only)
+                        // H2 Console
                         .requestMatchers("/h2-console/**").permitAll()
 
-                        // Authenticated APIs
+                        // ✅ Allow OCR endpoint without authentication
+                        .requestMatchers(HttpMethod.POST, "/api/expenses/scan").permitAll()
+
+                        // Auth APIs
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/auth/register").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
+
+                        // Other APIs require login
                         .requestMatchers("/api/**").authenticated()
 
-                        // Everything else
                         .anyRequest().permitAll())
 
                 .exceptionHandling(exceptions ->
